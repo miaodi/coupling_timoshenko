@@ -101,16 +101,9 @@ int main() {
 			N2N1 += weight[jj_y] * Neta_patch2 * Neta_patch1.transpose() * J_y;
 		}
 	}
-	MatrixXd MN2N1 = M.fullPivHouseholderQr().solve(N2N1);
 	MatrixXd Iden = MatrixXd::Identity(2, 2);
-	MatrixXd couplingMatrix = MatrixXd::Zero(2 * dof_patch2,
-	                          2 * (dof_patch2 - dof_y_patch2 + dof_y_patch1));
-	couplingMatrix.block(0, 0, 2 * dof_y_patch2,
-	                     2 * dof_y_patch1) = kroneckerProduct(MN2N1, Iden);
-	couplingMatrix.block(2 * dof_y_patch2, 2 * dof_y_patch1,
-	                     2 * (dof_patch2 - dof_y_patch2),
-	                     2 * (dof_patch2 - dof_y_patch2)) = MatrixXd::Identity(2 *
-	                             (dof_patch2 - dof_y_patch2), 2 * (dof_patch2 - dof_y_patch2));
+	MatrixXd Q1 = kroneckerProduct(M, Iden);
+	MatrixXd Q2 = kroneckerProduct(N2N1.transpose(), Iden);
 	MatrixXd K_patch1 = MatrixXd::Zero(2 * dof_patch1, 2 * dof_patch1);
 	for (int ii_x = 0; ii_x < elements_x_patch1; ii_x++) {
 		double J_x = (knots_x_patch1[ii_x + p_x + 1] - knots_x_patch1[ii_x + p_x]) / 2;
@@ -231,16 +224,20 @@ int main() {
 			}
 		}
 	}
-	MatrixXd K = MatrixXd::Zero(2 * (dof_patch1 + dof_patch2 -
-	                                 dof_y_patch2), 2 * (dof_patch1 + dof_patch2 - dof_y_patch2));
+	MatrixXd K = MatrixXd::Zero(2 * (dof_patch1 + dof_patch2 + dof_y_patch2),
+	                            2 * (dof_patch1 + dof_patch2 + dof_y_patch2));
 	K.block(0, 0, 2 * dof_patch1, 2 * dof_patch1) = K_patch1;
-	K.block(2 * (dof_patch1 - dof_y_patch1), 2 * (dof_patch1 - dof_y_patch1),
-	        2 * (dof_patch2 - dof_y_patch2 + dof_y_patch1),
-	        2 * (dof_patch2 - dof_y_patch2 + dof_y_patch1)) += couplingMatrix.transpose()
-	                * K_patch2 * couplingMatrix;
-
-
-	VectorXd FT = VectorXd::Zero(2 * (dof_patch1 + dof_patch2 -
+	K.block(2 * dof_patch1, 2 * dof_patch1, 2 * dof_patch2,
+	        2 * dof_patch2) = K_patch2;
+	K.block(2 * (dof_patch1 - dof_y_patch1), 2 * (dof_patch1 + dof_patch2),
+	        2 * dof_y_patch1, 2 * dof_y_patch2) = Q2;
+	K.block(2 * (dof_patch1 + dof_patch2), 2 * (dof_patch1 - dof_y_patch1),
+	        2 * dof_y_patch2, 2 * dof_y_patch1) = Q2.transpose();
+	K.block(2 * (dof_patch1), 2 * (dof_patch1 + dof_patch2),
+	        2 * dof_y_patch2, 2 * dof_y_patch2) = -Q1;
+	K.block(2 * (dof_patch1 + dof_patch2), 2 * (dof_patch1),
+	        2 * dof_y_patch2, 2 * dof_y_patch2) = -Q1.transpose();
+	VectorXd FT = VectorXd::Zero(2 * (dof_patch1 + dof_patch2 +
 	                                  dof_y_patch2));
 	for (int ii_y = 0; ii_y < elements_y_patch2; ii_y++) {
 		double J_y = (knots_y_patch2[ii_y + p_y + 1] - knots_y_patch2[ii_y + p_y]) / 2;
@@ -272,7 +269,7 @@ int main() {
 			CompToPhy_patch2(xi, eta, x, y);
 			Vector3d stress;
 			AnalyticalStress(x, y, L, D, I, P, stress);
-			FT.segment(2 * (dof_patch1 - dof_y_patch2),
+			FT.segment(2 * (dof_patch1),
 			           2 * (dof_patch2)) += weight[jj_y] * (stress(
 			                                    2) * NxiNetaY) * J_y * pypeta;
 		}
@@ -311,7 +308,7 @@ int main() {
 	}
 	VectorXd Ux_dirichlet = y_basis.ldlt().solve(Ux_rhs);
 	VectorXd Uy_dirichlet = y_basis.ldlt().solve(Uy_rhs);
-	VectorXd Dirichlet = VectorXd::Zero(2 * (dof_patch1 + dof_patch2 -
+	VectorXd Dirichlet = VectorXd::Zero(2 * (dof_patch1 + dof_patch2 +
 	                                    dof_y_patch2));
 	for (int i = 0; i < dof_y_patch1; i++) {
 		Dirichlet(2 * i) = Ux_dirichlet(i);
@@ -319,10 +316,10 @@ int main() {
 	}
 	FT += -K * Dirichlet;
 	MatrixXd K_compute = K.block(2 * dof_y_patch1, 2 * dof_y_patch1,
-	                             2 * (dof_patch1 + dof_patch2 -
-	                                  dof_y_patch2 - dof_y_patch1), 2 * (dof_patch1 + dof_patch2 -
+	                             2 * (dof_patch1 + dof_patch2 +
+	                                  dof_y_patch2 - dof_y_patch1), 2 * (dof_patch1 + dof_patch2 +
 	                                          dof_y_patch2 - dof_y_patch1));
-	VectorXd F_compute = FT.segment(2 * dof_y_patch1, 2 * (dof_patch1 + dof_patch2 -
+	VectorXd F_compute = FT.segment(2 * dof_y_patch1, 2 * (dof_patch1 + dof_patch2 +
 	                                dof_y_patch2 - dof_y_patch1));
 	VectorXd U_result = K_compute.partialPivLu().solve(F_compute);
 	VectorXd Ux_patch1 = VectorXd::Zero(dof_patch1),
@@ -335,20 +332,13 @@ int main() {
 		Ux_patch1(i + dof_y_patch1) = U_result(2 * i);
 		Uy_patch1(i + dof_y_patch1) = U_result(2 * i + 1);
 	}
-	VectorXd U_couple = couplingMatrix.block(0, 0, 2 * dof_y_patch2,
-	                    2 * dof_y_patch1) * U_result.segment(2 * dof_patch1 - 4 * dof_y_patch1,
-	                            2 * dof_y_patch1);
 	VectorXd Ux_patch2 = VectorXd::Zero(dof_patch2),
 	         Uy_patch2 = VectorXd::Zero(dof_patch2);
-	for (int i = 0; i < dof_y_patch2; i++) {
-		Ux_patch2(i) = U_couple(2 * i);
-		Uy_patch2(i) = U_couple(2 * i + 1);
-	}
-	for (int i = 0; i < (dof_x_patch2 - 1)*dof_y_patch2; i++) {
-		Ux_patch2(i + dof_y_patch2) = U_result(2 * dof_patch1 - 2 * dof_y_patch1 + 2 *
-		                                       i);
-		Uy_patch2(i + dof_y_patch2) = U_result(2 * dof_patch1 - 2 * dof_y_patch1 + 2 * i
-		                                       + 1);
+	for (int i = 0; i < dof_patch2; i++) {
+		Ux_patch2(i) = U_result(2 * dof_patch1 - 2 * dof_y_patch1 + 2 *
+		                        i);
+		Uy_patch2(i) = U_result(2 * dof_patch1 - 2 * dof_y_patch1 + 2 * i
+		                        + 1);
 	}
 	double L2_norm = 0, L2_norm_error = 0;
 	for (int ii_x = 0; ii_x < elements_x_patch1; ii_x++) {
